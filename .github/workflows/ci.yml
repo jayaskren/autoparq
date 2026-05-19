@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install maturin
+        run: pip install maturin pytest
+
+      - name: Run Rust tests
+        run: cargo test
+
+      - name: Build and install Python extension
+        run: maturin develop
+
+      - name: Generate test fixtures
+        run: cargo run --example gen_fixtures
+
+      - name: Run integration tests
+        run: cargo test -- --ignored
+
+      - name: Run Python tests
+        run: pytest tests/python/ -v

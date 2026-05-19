@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>autoparq — Parquet Compression Analyzer</title>
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📦</text></svg>" />
+</head>
+<body class="bg-canvas-default text-fg-default min-h-screen">
+
+  <!-- Sticky Header -->
+  <header class="sticky top-0 z-50 bg-canvas-default/95 backdrop-blur border-b border-border-default">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-14 flex items-center gap-4">
+      <span class="font-mono font-semibold text-base text-fg-default">autoparq</span>
+      <span class="text-fg-muted text-sm hidden sm:block">Parquet compression analyzer — all analysis runs in your browser</span>
+      <div class="ml-auto flex items-center gap-3">
+        <div id="engine-selector-slot"></div>
+        <span class="text-xs bg-success-subtle text-success-fg border border-success-emphasis/30 rounded-full px-2 py-0.5">🔒 Private</span>
+        <a href="https://github.com/jayaskren/autoparq" target="_blank" rel="noopener"
+           class="text-fg-muted hover:text-fg-default transition-colors text-sm">GitHub</a>
+      </div>
+    </div>
+  </header>
+
+  <!-- Hero / Drop Zone -->
+  <section id="hero" class="max-w-3xl mx-auto px-4 py-16">
+    <div class="text-center mb-10">
+      <h1 class="text-3xl font-semibold text-fg-default mb-3">Optimize your Parquet files</h1>
+      <p class="text-fg-muted text-base">Drop a <code class="font-mono text-accent-fg">.parquet</code> file to get codec and encoding recommendations based on your actual data.</p>
+    </div>
+
+    <!-- Options Bar -->
+    <div id="options-bar" class="flex flex-wrap gap-4 justify-center mb-6">
+      <div class="flex items-center gap-2">
+        <label for="engine-select" class="text-sm text-fg-muted">Engine</label>
+        <div id="engine-select-container"></div>
+      </div>
+      <div class="flex items-center gap-2">
+        <label for="priority-select" class="text-sm text-fg-muted">Priority</label>
+        <div id="priority-select-container"></div>
+      </div>
+    </div>
+
+    <!-- Drop Zone -->
+    <div id="drop-zone"
+         class="border-2 border-dashed border-border-default rounded-md p-12 text-center cursor-pointer transition-all duration-200 hover:border-accent-emphasis hover:bg-accent-subtle/40"
+         role="button" tabindex="0" aria-label="Drop a Parquet file or click to browse">
+      <div class="flex flex-col items-center gap-4">
+        <div class="text-5xl">📂</div>
+        <div>
+          <p class="text-fg-default font-medium text-base">Drop a <span class="font-mono text-accent-fg">.parquet</span> file here</p>
+          <p class="text-fg-muted text-sm mt-1">or click to browse</p>
+        </div>
+        <input id="file-input" type="file" accept=".parquet" class="hidden" />
+        <div id="drop-zone-error" class="hidden text-danger-fg text-sm font-medium"></div>
+      </div>
+    </div>
+
+    <!-- Sample file buttons -->
+    <div class="mt-4 text-center">
+      <p class="text-fg-muted text-sm mb-2">No file handy? Try a sample:</p>
+      <div class="flex flex-wrap gap-2 justify-center">
+        <button class="sample-file-btn text-xs bg-canvas-subtle hover:bg-canvas-inset text-fg-muted border border-border-default rounded-md px-3 py-1.5 transition-colors cursor-not-allowed opacity-50" disabled title="Sample files — coming soon">
+          orders_2024_q1.parquet
+        </button>
+        <button class="sample-file-btn text-xs bg-canvas-subtle hover:bg-canvas-inset text-fg-muted border border-border-default rounded-md px-3 py-1.5 transition-colors cursor-not-allowed opacity-50" disabled title="Sample files — coming soon">
+          events_clickstream.parquet
+        </button>
+        <span class="text-xs text-fg-subtle self-center">(coming soon)</span>
+      </div>
+    </div>
+
+    <!-- Privacy Notice -->
+    <p class="text-center text-fg-muted text-sm mt-6">
+      🔒 Your file never leaves your browser. Analysis runs entirely in WebAssembly.
+    </p>
+  </section>
+
+  <!-- Progress Section -->
+  <section id="progress" class="hidden max-w-3xl mx-auto px-4 py-8">
+    <div class="bg-canvas-subtle rounded-md p-8 border border-border-default">
+      <div class="flex items-center gap-3 mb-4">
+        <div class="w-5 h-5 border-2 border-accent-emphasis border-t-transparent rounded-full animate-spin"></div>
+        <span id="progress-label" class="text-fg-default">Initializing...</span>
+      </div>
+      <div class="w-full bg-canvas-inset rounded-full h-2">
+        <div id="progress-bar" class="bg-accent-emphasis h-2 rounded-full transition-all duration-300" style="width: 0%"></div>
+      </div>
+      <p class="text-fg-muted text-xs mt-2">🔒 All processing runs locally in your browser</p>
+    </div>
+  </section>
+
+  <!-- Report Section -->
+  <section id="report" class="hidden">
+    <div id="report-container" class="px-4 sm:px-6 py-6"></div>
+  </section>
+
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>

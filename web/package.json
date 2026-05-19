@@ -1,0 +1,24 @@
+{
+  "name": "autoparq-web",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "wasm:build":     "wasm-pack build .. --target web --out-dir web/pkg --release --features wasm --no-default-features",
+    "wasm:build:dev": "wasm-pack build .. --target web --out-dir web/pkg --dev --features wasm --no-default-features",
+    "dev":            "npm run wasm:build:dev && vite",
+    "dev:nowasm":     "vite",
+    "build":          "npm run wasm:build && vite build",
+    "preview":        "vite preview"
+  },
+  "devDependencies": {
+    "vite": "^5.0.0",
+    "vite-plugin-wasm": "^3.3.0",
+    "vite-plugin-top-level-await": "^1.4.0",
+    "@tailwindcss/vite": "^4.0.0",
+    "tailwindcss": "^4.0.0"
+  },
+  "dependencies": {
+    "tabulator-tables": "^6.2.0",
+    "shiki": "^1.0.0"
+  }
+}

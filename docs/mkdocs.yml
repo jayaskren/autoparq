@@ -1,0 +1,24 @@
+site_name: autoparq
+site_description: Parquet compression analysis and recommendation tool
+site_author: autoparq contributors
+repo_url: https://github.com/YOUR_USERNAME/autoparq
+docs_dir: docs
+
+theme:
+  name: material
+  features:
+    - navigation.tabs
+    - navigation.expand
+    - content.code.copy
+
+nav:
+  - Home: index.md
+  - Commands:
+    - info: commands/info.md
+    - tune: commands/tune.md
+    - bench: commands/bench.md
+    - apply: commands/apply.md
+  - Concepts:
+    - Encodings: concepts/encodings.md
+    - Codecs: concepts/codecs.md
+  - Contributing: contributing.md

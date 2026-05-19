@@ -1,0 +1,30 @@
+# Rust
+/target/
+
+# wasm-pack output (root-level, used for PyO3/WASM builds)
+/pkg/
+
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+*.so
+.pytest_cache/
+
+# Generated Parquet fixtures (run: cargo run --example gen_fixtures)
+tests/fixtures/*.parquet
+
+# Web
+web/node_modules/
+web/pkg/
+web/dist/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editors
+.idea/
+.vscode/
+*.swp
+*.swo

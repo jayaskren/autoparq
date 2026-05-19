@@ -1,0 +1,91 @@
+---
+source: tests/integration/test_tune.rs
+expression: "&report_json"
+---
+{
+  "columns": [
+    {
+      "cardinality_estimate": "[cardinality_estimate]",
+      "cardinality_ratio": "[cardinality_ratio]",
+      "caveats": [],
+      "column_name": "status",
+      "confidence": "High",
+      "confidence_reason": "sample_fraction=1.000 >= 0.10 and sample_rows=100000 >= 100,000",
+      "encoding_rule_fired": "RleDictionary",
+      "engine_compatibility": null,
+      "full_explain": null,
+      "impact_stars": 5,
+      "logical_type": "STRING",
+      "null_fraction": 0.0,
+      "physical_type": "BYTE_ARRAY",
+      "reason_brief": "cardinality_ratio=0.0001 (5 distinct / 100000 rows) < threshold 0.10",
+      "recommended_codec": "ZSTD",
+      "recommended_codec_level": 3,
+      "recommended_encoding": "RLE_DICTIONARY"
+    }
+  ],
+  "current_codec": "SNAPPY",
+  "engine": "unknown",
+  "file_caveats": [],
+  "file_path": "[file_path]",
+  "file_size_bytes": "[file_size_bytes]",
+  "num_columns": 1,
+  "num_rows": 100000,
+  "options": {
+    "a": {
+      "caveats": [],
+      "codec_description": "ZSTD:3 (default)",
+      "estimated_read_speedup": 1.0913043478260869,
+      "estimated_size_bytes": 2272,
+      "estimated_size_reduction_pct": 13.043478260869556,
+      "label": "Balanced",
+      "note": "estimated (not measured) — use autoparq bench to validate",
+      "python_snippet": "PARQUET_WRITE_OPTIONS = {\n    \"compression\": \"zstd\",\n    \"compression_level\": 3,\n    \"column_encoding\": {\n        \"status\": \"RLE_DICTIONARY\"\n    }\n}\npq.write_table(table, \"output.parquet\", **PARQUET_WRITE_OPTIONS)"
+    },
+    "b": {
+      "caveats": [],
+      "codec_description": "ZSTD:6 (maximum compression)",
+      "estimated_read_speedup": 1.0730434782608695,
+      "estimated_size_bytes": 2221,
+      "estimated_size_reduction_pct": 14.999999999999988,
+      "label": "Smallest File",
+      "note": "estimated (not measured) — use autoparq bench to validate",
+      "python_snippet": "PARQUET_WRITE_OPTIONS = {\n    \"compression\": \"zstd\",\n    \"compression_level\": 6,\n    \"column_encoding\": {\n        \"status\": \"RLE_DICTIONARY\"\n    }\n}\npq.write_table(table, \"output.parquet\", **PARQUET_WRITE_OPTIONS)"
+    },
+    "c": {
+      "caveats": [],
+      "codec_description": "LZ4 (fastest decompression)",
+      "estimated_read_speedup": 1.1186956521739129,
+      "estimated_size_bytes": 2340,
+      "estimated_size_reduction_pct": 10.434782608695645,
+      "label": "Fastest Reads",
+      "note": "estimated (not measured) — use autoparq bench to validate",
+      "python_snippet": "PARQUET_WRITE_OPTIONS = {\n    \"compression\": \"lz4\",\n    \"column_encoding\": {\n        \"status\": \"RLE_DICTIONARY\"\n    }\n}\npq.write_table(table, \"output.parquet\", **PARQUET_WRITE_OPTIONS)"
+    }
+  },
+  "overall_confidence": "High",
+  "predicted_read_speedup": 1.0913043478260869,
+  "predicted_size_reduction_pct": 13.043478260869556,
+  "priority": "balanced",
+  "python_snippet": "",
+  "row_group_advisory": {
+    "advice": "Row group size 0 MB is below the 64–256 MB recommendation for general workloads. Small row groups reduce compression effectiveness and increase predicate pushdown overhead.",
+    "current_avg_mb": 0.0020589828491210938,
+    "current_max_mb": 0.0020589828491210938,
+    "current_min_mb": 0.0020589828491210938,
+    "is_within_recommendation": false,
+    "recommended_range_mb": [
+      64.0,
+      256.0
+    ],
+    "workload_label": "general workloads"
+  },
+  "sample_fraction": 1.0,
+  "scan_time_ms": "[scan_time_ms]",
+  "sort_advisory": {
+    "advice": "No strongly monotonic columns detected. Consider sorting by your most common filter predicate column before writing.",
+    "declared_sort_columns": [],
+    "inferred_sort_candidates": []
+  },
+  "spark_snippet": ""
+}

@@ -1,0 +1,62 @@
+[package]
+name = "autoparq"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "autoparq"
+crate-type = ["cdylib", "rlib"]
+
+[features]
+default = []
+python = ["dep:pyo3"]
+wasm   = ["dep:wasm-bindgen", "dep:js-sys", "dep:console_error_panic_hook"]
+
+[dependencies]
+parquet = { version = "55", features = ["arrow", "snap", "lz4", "zstd", "brotli"] }
+arrow = { version = "55", features = ["ipc"] }
+pyo3 = { version = "0.22", features = ["extension-module"], optional = true }
+thiserror = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+regex = "1"
+ahash = "0.8"
+bytes = "1"
+tempfile = "3"
+hyperloglog = "1.0.3"
+
+[dependencies.wasm-bindgen]
+version = "0.2"
+optional = true
+
+[dependencies.js-sys]
+version = "0.3"
+optional = true
+
+[dependencies.console_error_panic_hook]
+version = "0.1"
+optional = true
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+rayon = "1"
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+getrandom = { version = "0.2", features = ["js"] }
+getrandom03 = { package = "getrandom", version = "0.3", features = ["wasm_js"] }
+instant = { version = "0.1", features = ["wasm-bindgen"] }
+
+[dev-dependencies]
+insta = { version = "1", features = ["json", "redactions"] }
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[[example]]
+name = "gen_fixtures"
+path = "examples/gen_fixtures.rs"
+
+[[test]]
+name = "integration"
+path = "tests/integration/mod.rs"
+
+[[bench]]
+name = "profiler_throughput"
+harness = false
