@@ -36,7 +36,7 @@ jobs:
         run: cargo test
 
       - name: Build and install Python extension
-        run: maturin develop
+        run: pip install .
 
       - name: Generate test fixtures
         run: cargo run --example gen_fixtures
