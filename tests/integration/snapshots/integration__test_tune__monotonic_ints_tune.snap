@@ -6,9 +6,9 @@ expression: "&report_json"
   "column_profiles": [
     {
       "byte_entropy": null,
-      "cardinality_estimate": 97540,
+      "cardinality_estimate": "[cardinality_estimate]",
       "cardinality_method": "hyperloglog",
-      "cardinality_ratio": 0.9754,
+      "cardinality_ratio": "[cardinality_ratio]",
       "column_name": "id",
       "json_pattern_detected": false,
       "logical_type": null,

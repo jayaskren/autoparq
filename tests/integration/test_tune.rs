@@ -30,6 +30,8 @@ fn test_tune_monotonic_ints() {
         ".file_size_bytes" => "[file_size_bytes]",
         ".columns[].cardinality_estimate" => "[cardinality_estimate]",
         ".columns[].cardinality_ratio" => "[cardinality_ratio]",
+        ".column_profiles[].cardinality_estimate" => "[cardinality_estimate]",
+        ".column_profiles[].cardinality_ratio" => "[cardinality_ratio]",
     });
 }
 
@@ -52,6 +54,8 @@ fn test_tune_low_cardinality_strings() {
         ".file_size_bytes" => "[file_size_bytes]",
         ".columns[].cardinality_estimate" => "[cardinality_estimate]",
         ".columns[].cardinality_ratio" => "[cardinality_ratio]",
+        ".column_profiles[].cardinality_estimate" => "[cardinality_estimate]",
+        ".column_profiles[].cardinality_ratio" => "[cardinality_ratio]",
     });
 }
 
