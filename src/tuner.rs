@@ -114,6 +114,8 @@ fn teach_yourself_text(rule: &RuleName) -> &'static str {
         RuleName::RleDictionary => "Dictionary encoding stores each distinct value once and replaces data values with small integer indices. When cardinality is low (few distinct values), these indices compress extremely well with run-length encoding. Rule of thumb: if cardinality < 10% of row count and the dictionary fits in ~512KB, use dictionary encoding.",
         RuleName::ByteStreamSplit => "BYTE_STREAM_SPLIT deinterleaves the bytes of floating-point values — writing all MSBs together, then all next bytes, etc. For physically-related floats (measurements in a range), this groups similar bytes together, improving codec compression by 10–30%.",
         RuleName::PlainUuid => "UUID columns have cardinality equal to row count, so dictionary encoding would require storing every UUID in the dictionary — as large as the original column. PLAIN with ZSTD is optimal for high-cardinality string columns.",
+        RuleName::DeltaByteArray => "DELTA_BYTE_ARRAY stores how much each string shares with the previous one (prefix length) and writes only the differing suffix. For sorted or nearly-sorted string columns, neighboring values share long prefixes, so only tiny byte differences are stored. A column of sorted paths, keys, or date-prefixed IDs can compress to 20–30% of its PLAIN size before any codec is applied. Requires Parquet V2 data pages; Spark 3.3+ can read it but cannot write it via the DataFrame API.",
+        RuleName::DeltaLengthByteArray => "DELTA_LENGTH_BYTE_ARRAY is a two-part encoding: it delta-encodes the sequence of string lengths, then appends all raw string bytes together in one block. Codecs like ZSTD find patterns in the concatenated bytes more effectively than in interleaved length+value PLAIN encoding. The improvement is modest — roughly 2–3% additional size reduction on top of ZSTD — but consistent for high-cardinality short-string columns.",
         RuleName::PlainDefault => "No specific pattern was detected. PLAIN encoding with a byte-oriented codec (ZSTD) is the safe baseline.",
     }
 }
@@ -133,6 +135,10 @@ fn build_full_explain(
     raw_stats.insert(
         "monotonicity_score".to_string(),
         profile.monotonicity_score.map_or(serde_json::Value::Null, |v| json!(v)),
+    );
+    raw_stats.insert(
+        "string_monotonicity_score".to_string(),
+        profile.string_monotonicity_score.map_or(serde_json::Value::Null, |v| json!(v)),
     );
     raw_stats.insert("run_length_score".to_string(), json!(profile.run_length_score));
     raw_stats.insert("null_fraction".to_string(), json!(profile.null_fraction));
@@ -279,7 +285,59 @@ fn build_full_explain(
         });
     }
 
-    // Rule 6: PlainDefault
+    // Rule 6: DeltaByteArray
+    {
+        let evaluated = is_byte_array;
+        let fired = enc_rec.rule_fired == RuleName::DeltaByteArray;
+        let sms_str = profile.string_monotonicity_score
+            .map_or("null".to_string(), |s| format!("{:.4}", s));
+        let mean_len_str = profile.string_length_stats.as_ref()
+            .map_or("null".to_string(), |s| format!("{:.1}", s.mean_len));
+        let outcome = if fired {
+            format!("Fired: string_monotonicity_score={} >= 0.80, mean_len={} <= 50 → DELTA_BYTE_ARRAY", sms_str, mean_len_str)
+        } else if evaluated {
+            match profile.string_monotonicity_score {
+                Some(s) if s >= 0.80 => format!("Rejected: mean_len={} > 50", mean_len_str),
+                Some(s) => format!("Rejected: string_monotonicity_score={:.4} < threshold 0.80", s),
+                None => "Rejected: string_monotonicity_score not available".to_string(),
+            }
+        } else {
+            format!("Skipped: physical_type={} is not BYTE_ARRAY", profile.physical_type)
+        };
+        reasoning_chain.push(RuleEvaluation {
+            rule_name: "DeltaByteArray".to_string(),
+            evaluated,
+            fired,
+            threshold: "string_monotonicity_score >= 0.80 and mean_len <= 50".to_string(),
+            actual_value: format!("sms={}, mean_len={}", sms_str, mean_len_str),
+            outcome,
+        });
+    }
+
+    // Rule 7: DeltaLengthByteArray
+    {
+        let evaluated = is_byte_array;
+        let fired = enc_rec.rule_fired == RuleName::DeltaLengthByteArray;
+        let mean_len_str = profile.string_length_stats.as_ref()
+            .map_or("null".to_string(), |s| format!("{:.1}", s.mean_len));
+        let outcome = if fired {
+            format!("Fired: cardinality_ratio={:.4} >= 0.10, mean_len={} <= 50 → DELTA_LENGTH_BYTE_ARRAY", profile.cardinality_ratio, mean_len_str)
+        } else if evaluated {
+            format!("Rejected: mean_len={} > 50 or cardinality_ratio={:.4} < 0.10", mean_len_str, profile.cardinality_ratio)
+        } else {
+            format!("Skipped: physical_type={} is not BYTE_ARRAY", profile.physical_type)
+        };
+        reasoning_chain.push(RuleEvaluation {
+            rule_name: "DeltaLengthByteArray".to_string(),
+            evaluated,
+            fired,
+            threshold: "cardinality_ratio >= 0.10 and mean_len <= 50".to_string(),
+            actual_value: format!("cardinality_ratio={:.4}, mean_len={}", profile.cardinality_ratio, mean_len_str),
+            outcome,
+        });
+    }
+
+    // Rule 8: PlainDefault
     {
         let fired = enc_rec.rule_fired == RuleName::PlainDefault;
         reasoning_chain.push(RuleEvaluation {
@@ -386,6 +444,8 @@ fn predicted_size_reduction_pct(columns: &[ColumnRecommendation], file_profile: 
                     else { 2.0 }
                 }
                 "ByteStreamSplit" => 1.15,
+                "DeltaByteArray" => 2.5,
+                "DeltaLengthByteArray" => 1.05,
                 _ => if meta.map_or(false, |m| m.codec != col_rec.recommended_codec) { 1.25 } else { 1.0 }
             }
         } else {
@@ -411,6 +471,7 @@ fn fallback_profile(col_name: &str, meta: &ColumnMetaSummary, total_rows: i64) -
         cardinality_ratio: 0.0,
         cardinality_method: "unavailable".to_string(),
         monotonicity_score: None,
+        string_monotonicity_score: None,
         run_length_score: 0.0,
         string_length_stats: None,
         uuid_pattern_detected: false,
@@ -506,6 +567,7 @@ fn generate_option_bundles(
             cardinality_ratio: cr.cardinality_ratio,
             cardinality_method: "exact".to_string(),
             monotonicity_score: None,
+            string_monotonicity_score: None,
             run_length_score: 0.0,
             string_length_stats: None,
             uuid_pattern_detected: false,

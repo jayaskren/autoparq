@@ -45,6 +45,8 @@ fn parse_encoding(s: &str) -> Result<Encoding, AutoparqError> {
         "RLE_DICTIONARY" | "DICT" => Ok(Encoding::RLE_DICTIONARY),
         "BYTE_STREAM_SPLIT" => Ok(Encoding::BYTE_STREAM_SPLIT),
         "RLE" => Ok(Encoding::RLE),
+        "DELTA_LENGTH_BYTE_ARRAY" => Ok(Encoding::DELTA_LENGTH_BYTE_ARRAY),
+        "DELTA_BYTE_ARRAY" => Ok(Encoding::DELTA_BYTE_ARRAY),
         other => Err(AutoparqError::UnsupportedType(format!(
             "Unknown encoding: {}",
             other
@@ -82,7 +84,12 @@ pub fn valid_encodings_for_type(physical_type: &str) -> Vec<String> {
             "DELTA_BINARY_PACKED".into(),
             "RLE_DICTIONARY".into(),
         ],
-        "BYTE_ARRAY" => vec!["PLAIN".into(), "RLE_DICTIONARY".into()],
+        "BYTE_ARRAY" => vec![
+            "PLAIN".into(),
+            "RLE_DICTIONARY".into(),
+            "DELTA_LENGTH_BYTE_ARRAY".into(),
+            "DELTA_BYTE_ARRAY".into(),
+        ],
         "FLOAT" | "DOUBLE" => vec!["PLAIN".into(), "BYTE_STREAM_SPLIT".into()],
         "BOOLEAN" => vec!["PLAIN".into()],
         _ => vec!["PLAIN".into()],
@@ -337,6 +344,10 @@ mod tests {
 
         let float_encs = valid_encodings_for_type("FLOAT");
         assert!(float_encs.contains(&"BYTE_STREAM_SPLIT".to_string()));
+
+        let byte_encs = valid_encodings_for_type("BYTE_ARRAY");
+        assert!(byte_encs.contains(&"DELTA_BYTE_ARRAY".to_string()));
+        assert!(byte_encs.contains(&"DELTA_LENGTH_BYTE_ARRAY".to_string()));
 
         let bool_encs = valid_encodings_for_type("BOOLEAN");
         assert_eq!(bool_encs, vec!["PLAIN".to_string()]);

@@ -127,11 +127,19 @@ autoparq apply <file> --output <out-file> [--in-place]
 3. `(any type)` + `cardinality_ratio < 0.10` AND `cardinality_estimate × avg_value_bytes < 524_288` (512 KB) → `RLE_DICTIONARY`
 4. `FLOAT/DOUBLE` + `cardinality_ratio > 0.50` → `BYTE_STREAM_SPLIT`
 5. `BYTE_ARRAY` + UUID pattern detected → `PLAIN` *(dictionary overflow avoidance)*
-6. All others → `PLAIN`
+6. `BYTE_ARRAY` + `cardinality_ratio >= 0.10` AND `string_monotonicity_score >= 0.80` AND `mean_len <= 50` AND not UUID AND not JSON → `DELTA_BYTE_ARRAY`
+7. `BYTE_ARRAY` + `cardinality_ratio >= 0.10` AND `mean_len <= 50` AND not UUID AND not JSON → `DELTA_LENGTH_BYTE_ARRAY`
+8. All others → `PLAIN`
 
 **Note on Rule 2:** TIMESTAMP and DATE are logical types layered on top of INT64/INT32 physical types. The check applies to both the physical type and the logical type annotation.
 
 **Note on Rule 3 avg_value_bytes:** Use `string_length_stats.mean_len` for BYTE_ARRAY; `4` for INT32/FLOAT; `8` for INT64/DOUBLE; `1` for BOOLEAN.
+
+**Note on Rules 6 and 7:** Rule 6 is evaluated before Rule 7. A column satisfying Rule 6 would also satisfy Rule 7; Rule 6 wins. Both rules require `use_dictionary=False` (global) or a per-column list in the generated PyArrow snippet — PyArrow enables dictionary by default and silently falls back to RLE_DICTIONARY without it.
+
+**Note on Rule 6 Spark write caveat:** Spark cannot write DELTA_BYTE_ARRAY via the DataFrame API. Spark 3.3+ can read it. The generated Spark snippet must note "read compatible Spark 3.3+; write with PyArrow".
+
+**Note on Rule 7 DuckDB write note:** DuckDB 1.2.0 can write DELTA_LENGTH_BYTE_ARRAY in V2 mode.
 
 ### Codec selection — apply after encoding
 
@@ -154,8 +162,10 @@ autoparq apply <file> --output <out-file> [--in-place]
 
 **Monotonicity / run-length scores:**
 - Nulls are treated as "breaks": any pair where either value is null is excluded from both numerator and denominator.
-- Monotonicity only applies to INT32, INT64, TIMESTAMP, DATE columns. Returns `None` for all other types.
-- Monotonicity threshold for Rule 2: `>= 0.90` (inclusive).
+- Monotonicity (`monotonicity_score`) only applies to INT32, INT64, TIMESTAMP, DATE columns. Returns `None` for all other types. Threshold for Rule 2: `>= 0.90` (inclusive).
+- **String monotonicity** (`string_monotonicity_score`): New field. Applies to `BYTE_ARRAY`/`Utf8`/`LargeUtf8` columns only. Uses lexicographic `<=` comparison: `score = fraction of consecutive non-null pairs where value[i] >= value[i-1]`. Returns `None` for non-BYTE_ARRAY types, and `None` when fewer than two consecutive non-null values exist. Empty strings are valid values.
+- The existing `monotonicity_score` field is unchanged — still `None` for BYTE_ARRAY columns.
+- Threshold for Rule 6 (string): `>= 0.80` (inclusive). Boundary downgrade: if score is in `[0.64, 0.96)`, confidence is MEDIUM regardless of sample size.
 
 **UUID detection:** Regex `^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$` on up to 1,000 sample values. Detected if ≥ 90% match.
 
@@ -171,7 +181,9 @@ autoparq apply <file> --output <out-file> [--in-place]
 | MEDIUM | (`sample_fraction >= 0.02` OR `sample_rows >= 50_000`) AND not HIGH |
 | LOW | everything else |
 
-**Boundary downgrade:** If `rule_fired = RleDictionary` and `cardinality_ratio` is within 20% of the 0.10 threshold (i.e., between 0.08 and 0.12), downgrade to MEDIUM regardless of sample size. The recommendation is uncertain near the threshold.
+**Boundary downgrade:**
+- If `rule_fired = RleDictionary` and `cardinality_ratio` is within 20% of the 0.10 threshold (i.e., between 0.08 and 0.12), downgrade to MEDIUM regardless of sample size.
+- If `rule_fired = DeltaByteArray` and `string_monotonicity_score` is in `[0.64, 0.96)` (within 20% of the 0.80 threshold), downgrade to MEDIUM regardless of sample size.
 
 ## Engine Compatibility Matrix
 
@@ -183,12 +195,22 @@ autoparq apply <file> --output <out-file> [--in-place]
 | BROTLI | ✓ 3.3+ | ✓ | ✗ | ✓ |
 | GZIP | ✓ all | ✓ | ✗ | ✓ |
 
-`DELTA_BINARY_PACKED` encoding: Spark 3.2+, DuckDB ✓, ClickHouse ✓, PyArrow ✓.
+**Encoding compatibility:**
+
+| Encoding | Spark | DuckDB | ClickHouse | Polars/PyArrow |
+|----------|-------|--------|------------|----------------|
+| DELTA_BINARY_PACKED | 3.2+ read+write | read+write | read+write | read+write |
+| DELTA_BYTE_ARRAY | 3.3+ read only | read only (1.2.0) | Warning (PR #91929) | read+write |
+| DELTA_LENGTH_BYTE_ARRAY | 3.3+ read only | read+write (V2 mode) | Warning (issue #44505) | read+write |
 
 Known bugs to warn on:
 - `parquet-go` + LZ4 + `DELTA_BINARY_PACKED` → unreadable files. Emit Warning caveat.
 - ClickHouse + BROTLI → unsupported for Parquet import. Downgrade to ZSTD with Warning caveat.
 - ClickHouse + GZIP → unsupported for Parquet import. Emit Warning caveat.
+- ClickHouse + `DELTA_BYTE_ARRAY` → repetitive-string decoding bug fixed in PR #91929. Emit Warning caveat.
+- ClickHouse + `DELTA_LENGTH_BYTE_ARRAY` → compatibility issues fixed around issue #44505. Emit Warning caveat.
+- DuckDB + `DELTA_BYTE_ARRAY` (write) → DuckDB 1.2.0 intentionally omits this from its writer. Emit Warning caveat for write path.
+- Spark + `DELTA_BYTE_ARRAY` or `DELTA_LENGTH_BYTE_ARRAY` (write) → Spark cannot write these via the DataFrame API. The Spark snippet must note "read compatible Spark 3.3+; write with PyArrow".
 
 Column-level encoding in Spark requires Spark 3.4+ when using per-column hints via the DataFrame API. The generated Spark snippet should include this note.
 

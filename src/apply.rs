@@ -57,6 +57,8 @@ fn parse_encoding_for_writer(s: &str) -> Result<Encoding, AutoparqError> {
         "RLE_DICTIONARY" => Ok(Encoding::RLE_DICTIONARY),
         "BYTE_STREAM_SPLIT" => Ok(Encoding::BYTE_STREAM_SPLIT),
         "RLE" => Ok(Encoding::RLE),
+        "DELTA_LENGTH_BYTE_ARRAY" => Ok(Encoding::DELTA_LENGTH_BYTE_ARRAY),
+        "DELTA_BYTE_ARRAY" => Ok(Encoding::DELTA_BYTE_ARRAY),
         _ => Ok(Encoding::PLAIN), // fallback
     }
 }

@@ -168,6 +168,7 @@ mod tests {
             cardinality_ratio: 0.5,
             cardinality_method: "exact".to_string(),
             monotonicity_score: None,
+            string_monotonicity_score: None,
             run_length_score: 0.0,
             string_length_stats: None,
             uuid_pattern_detected: false,

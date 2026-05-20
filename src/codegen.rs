@@ -76,14 +76,18 @@ fn generate_pyspark(report: &TuneReport) -> String {
     let (codec, _) = most_common_codec(report);
     let codec_lower = codec.to_lowercase();
 
-    let mut lines = vec![
-        "from pyspark.sql import SparkSession".to_string(),
-    ];
+    const DELTA_STRING_ENCODINGS: &[&str] = &["DELTA_BYTE_ARRAY", "DELTA_LENGTH_BYTE_ARRAY"];
+
+    let non_plain: Vec<&crate::tuner::ColumnRecommendation> = report
+        .columns
+        .iter()
+        .filter(|c| c.recommended_encoding != "PLAIN")
+        .collect();
+
+    let mut lines = vec!["from pyspark.sql import SparkSession".to_string()];
 
     if codec_lower == "zstd" {
-        lines.push("# Note: ZSTD requires Spark 3.2+; per-column encoding hints require Spark 3.4+".to_string());
-    } else {
-        lines.push("# Note: Per-column encoding hints require Spark 3.4+".to_string());
+        lines.push("# Note: ZSTD requires Spark 3.2+".to_string());
     }
 
     lines.push(String::new());
@@ -91,10 +95,29 @@ fn generate_pyspark(report: &TuneReport) -> String {
         "spark.conf.set(\"spark.sql.parquet.compression.codec\", \"{}\")",
         codec_lower
     ));
-    lines.push("# Per-column encoding (Spark 3.4+ only):".to_string());
-    lines.push("# spark.conf.set(\"parquet.writer.version\", \"v2\")".to_string());
-    lines.push("# For column-level hints, use PyArrow to write the file instead.".to_string());
     lines.push("df.write.mode(\"overwrite\").parquet(\"output.parquet\")".to_string());
+
+    if !non_plain.is_empty() {
+        lines.push(String::new());
+        lines.push(
+            "# Spark's DataFrame API does not support per-column encoding.".to_string(),
+        );
+        lines.push(
+            "# Use the PyArrow snippet to apply the recommended encodings below:".to_string(),
+        );
+        for col in &non_plain {
+            let note = if DELTA_STRING_ENCODINGS.contains(&col.recommended_encoding.as_str()) {
+                format!("  # {} — Spark 3.3+ read-compatible", col.reason_brief)
+            } else {
+                format!("  # {}", col.reason_brief)
+            };
+            lines.push(format!(
+                "#   \"{}\": \"{}\",{}",
+                col.column_name, col.recommended_encoding, note
+            ));
+        }
+    }
+
     lines.push("# NOTE: predictions are [estimated] — use autoparq bench to validate".to_string());
 
     lines.join("\n")
@@ -181,6 +204,7 @@ mod tests {
             cardinality_ratio: 0.01,
             cardinality_method: "exact".to_string(),
             monotonicity_score: None,
+            string_monotonicity_score: None,
             run_length_score: 0.0,
             string_length_stats: None,
             uuid_pattern_detected: false,
@@ -246,6 +270,26 @@ mod tests {
         let snippet = generate_snippet(&report, "spark");
         assert!(snippet.contains("zstd"));
         assert!(snippet.contains("Spark 3.2+"));
+        // All-PLAIN: no per-column block at all
+        assert!(!snippet.contains("DataFrame API"));
+    }
+
+    #[test]
+    fn test_pyspark_snippet_delta_string_shows_columns() {
+        let report = make_report("ZSTD", Some(3), "DELTA_BYTE_ARRAY");
+        let snippet = generate_snippet(&report, "spark");
+        assert!(snippet.contains("\"id\": \"DELTA_BYTE_ARRAY\""));
+        assert!(snippet.contains("read-compatible"));
+        assert!(snippet.contains("PyArrow"));
+    }
+
+    #[test]
+    fn test_pyspark_snippet_non_plain_shows_columns() {
+        let report = make_report("ZSTD", Some(3), "RLE_DICTIONARY");
+        let snippet = generate_snippet(&report, "spark");
+        assert!(snippet.contains("DataFrame API"));
+        assert!(snippet.contains("\"id\": \"RLE_DICTIONARY\""));
+        assert!(snippet.contains("PyArrow snippet"));
     }
 
     #[test]
