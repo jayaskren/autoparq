@@ -8,6 +8,8 @@ pub enum RuleName {
     RleDictionary,
     ByteStreamSplit,
     PlainUuid,
+    DeltaByteArray,
+    DeltaLengthByteArray,
     PlainDefault,
 }
 
@@ -32,9 +34,16 @@ fn compute_confidence(profile: &ColumnProfile, rule: &RuleName) -> (ConfidenceTi
     let medium = profile.sample_fraction >= 0.02 || profile.sample_rows >= 50_000;
 
     // Boundary downgrade for RleDictionary near the 0.10 threshold
-    let near_boundary = matches!(rule, RuleName::RleDictionary)
+    let near_boundary_rle = matches!(rule, RuleName::RleDictionary)
         && profile.cardinality_ratio >= 0.08
         && profile.cardinality_ratio <= 0.12;
+
+    // Boundary downgrade for DeltaByteArray when score is within 20% of 0.80 threshold
+    let near_boundary_dba = matches!(rule, RuleName::DeltaByteArray)
+        && profile.string_monotonicity_score
+            .map_or(false, |s| s >= 0.64 && s < 0.96);
+
+    let near_boundary = near_boundary_rle || near_boundary_dba;
 
     if high && !near_boundary {
         (
@@ -45,7 +54,12 @@ fn compute_confidence(profile: &ColumnProfile, rule: &RuleName) -> (ConfidenceTi
             ),
         )
     } else if medium || near_boundary {
-        let reason = if near_boundary {
+        let reason = if near_boundary_dba {
+            format!(
+                "string_monotonicity_score={:.4} is within 20% of 0.80 threshold — boundary case",
+                profile.string_monotonicity_score.unwrap_or(0.0)
+            )
+        } else if near_boundary_rle {
             format!(
                 "cardinality_ratio={:.4} is within 20% of 0.10 threshold — boundary case",
                 profile.cardinality_ratio
@@ -178,7 +192,63 @@ pub fn recommend_encoding(
         };
     }
 
-    // Rule 6: PlainDefault (catch-all)
+    // Rule 6: DeltaByteArray — sorted high-cardinality short strings
+    if meta.physical_type == "BYTE_ARRAY"
+        && profile.cardinality_ratio >= 0.10
+        && !profile.uuid_pattern_detected
+        && !profile.json_pattern_detected
+    {
+        if let Some(sms) = profile.string_monotonicity_score {
+            if sms >= 0.80 {
+                let mean_len = profile
+                    .string_length_stats
+                    .as_ref()
+                    .map_or(f64::MAX, |s| s.mean_len);
+                if mean_len <= 50.0 {
+                    let rule = RuleName::DeltaByteArray;
+                    let (confidence, confidence_reason) = compute_confidence(profile, &rule);
+                    return EncodingRecommendation {
+                        encoding: "DELTA_BYTE_ARRAY".to_string(),
+                        rule_fired: rule,
+                        reason_brief: format!(
+                            "string_monotonicity_score={:.3} >= threshold 0.80, mean_len={:.0}, cardinality_ratio={:.4}",
+                            sms, mean_len, profile.cardinality_ratio
+                        ),
+                        confidence,
+                        confidence_reason,
+                    };
+                }
+            }
+        }
+    }
+
+    // Rule 7: DeltaLengthByteArray — high-cardinality short strings (any sort order)
+    if meta.physical_type == "BYTE_ARRAY"
+        && profile.cardinality_ratio >= 0.10
+        && !profile.uuid_pattern_detected
+        && !profile.json_pattern_detected
+    {
+        let mean_len = profile
+            .string_length_stats
+            .as_ref()
+            .map_or(f64::MAX, |s| s.mean_len);
+        if mean_len <= 50.0 {
+            let rule = RuleName::DeltaLengthByteArray;
+            let (confidence, confidence_reason) = compute_confidence(profile, &rule);
+            return EncodingRecommendation {
+                encoding: "DELTA_LENGTH_BYTE_ARRAY".to_string(),
+                rule_fired: rule,
+                reason_brief: format!(
+                    "cardinality_ratio={:.4} >= 0.10 and mean_len={:.0} <= 50 — high-cardinality short strings",
+                    profile.cardinality_ratio, mean_len
+                ),
+                confidence,
+                confidence_reason,
+            };
+        }
+    }
+
+    // Rule 8: PlainDefault (catch-all)
     let rule = RuleName::PlainDefault;
     let (confidence, confidence_reason) = compute_confidence(profile, &rule);
     EncodingRecommendation {
@@ -211,6 +281,7 @@ mod tests {
             cardinality_ratio: 0.00005,
             cardinality_method: "exact".to_string(),
             monotonicity_score: Some(0.0),
+            string_monotonicity_score: None,
             run_length_score: 0.0,
             string_length_stats: None,
             uuid_pattern_detected: false,
@@ -305,10 +376,12 @@ mod tests {
     }
 
     #[test]
-    fn test_rule6_plain_default() {
+    fn test_rule8_plain_default_no_string_length_stats() {
+        // When string_length_stats is None, Rules 6 and 7 cannot verify mean_len <= 50 and fall through.
         let (mut profile, meta) = make_profile("BYTE_ARRAY", None);
         profile.cardinality_ratio = 0.5;
         profile.uuid_pattern_detected = false;
+        profile.string_length_stats = None;
         let rec = recommend_encoding(&profile, &meta);
         assert_eq!(rec.rule_fired, RuleName::PlainDefault);
         assert_eq!(rec.encoding, "PLAIN");
@@ -373,6 +446,209 @@ mod tests {
         let rec = recommend_encoding(&profile, &meta);
         assert_eq!(rec.rule_fired, RuleName::RleDictionary);
         assert_eq!(rec.confidence, ConfidenceTier::Medium);
+    }
+
+    #[test]
+    fn test_rule6_fires_sorted_strings() {
+        let (mut profile, mut meta) = make_profile("BYTE_ARRAY", None);
+        meta.physical_type = "BYTE_ARRAY".to_string();
+        profile.cardinality_ratio = 0.30;
+        profile.string_monotonicity_score = Some(0.92);
+        profile.string_length_stats = Some(StringLengthStats { min_len: 5, max_len: 30, mean_len: 20.0, stddev_len: 5.0 });
+        profile.uuid_pattern_detected = false;
+        profile.json_pattern_detected = false;
+        let rec = recommend_encoding(&profile, &meta);
+        assert_eq!(rec.rule_fired, RuleName::DeltaByteArray);
+        assert_eq!(rec.encoding, "DELTA_BYTE_ARRAY");
+    }
+
+    #[test]
+    fn test_rule6_fires_at_threshold() {
+        let (mut profile, mut meta) = make_profile("BYTE_ARRAY", None);
+        meta.physical_type = "BYTE_ARRAY".to_string();
+        profile.cardinality_ratio = 0.20;
+        profile.string_monotonicity_score = Some(0.80);
+        profile.string_length_stats = Some(StringLengthStats { min_len: 5, max_len: 20, mean_len: 12.0, stddev_len: 3.0 });
+        let rec = recommend_encoding(&profile, &meta);
+        assert_eq!(rec.rule_fired, RuleName::DeltaByteArray);
+    }
+
+    #[test]
+    fn test_rule6_no_fire_low_monotonicity() {
+        let (mut profile, mut meta) = make_profile("BYTE_ARRAY", None);
+        meta.physical_type = "BYTE_ARRAY".to_string();
+        profile.cardinality_ratio = 0.30;
+        profile.string_monotonicity_score = Some(0.79);
+        profile.string_length_stats = Some(StringLengthStats { min_len: 5, max_len: 20, mean_len: 12.0, stddev_len: 3.0 });
+        let rec = recommend_encoding(&profile, &meta);
+        assert_ne!(rec.rule_fired, RuleName::DeltaByteArray);
+    }
+
+    #[test]
+    fn test_rule6_no_fire_long_strings() {
+        let (mut profile, mut meta) = make_profile("BYTE_ARRAY", None);
+        meta.physical_type = "BYTE_ARRAY".to_string();
+        profile.cardinality_ratio = 0.30;
+        profile.string_monotonicity_score = Some(0.90);
+        profile.string_length_stats = Some(StringLengthStats { min_len: 40, max_len: 80, mean_len: 51.0, stddev_len: 5.0 });
+        let rec = recommend_encoding(&profile, &meta);
+        assert_ne!(rec.rule_fired, RuleName::DeltaByteArray);
+    }
+
+    #[test]
+    fn test_rule6_no_fire_uuid() {
+        let (mut profile, mut meta) = make_profile("BYTE_ARRAY", None);
+        meta.physical_type = "BYTE_ARRAY".to_string();
+        profile.cardinality_ratio = 0.80;
+        profile.string_monotonicity_score = Some(0.95);
+        profile.string_length_stats = Some(StringLengthStats { min_len: 36, max_len: 36, mean_len: 36.0, stddev_len: 0.0 });
+        profile.uuid_pattern_detected = true;
+        let rec = recommend_encoding(&profile, &meta);
+        assert_eq!(rec.rule_fired, RuleName::PlainUuid);
+    }
+
+    #[test]
+    fn test_rule6_no_fire_json() {
+        let (mut profile, mut meta) = make_profile("BYTE_ARRAY", None);
+        meta.physical_type = "BYTE_ARRAY".to_string();
+        profile.cardinality_ratio = 0.30;
+        profile.string_monotonicity_score = Some(0.90);
+        profile.string_length_stats = Some(StringLengthStats { min_len: 10, max_len: 40, mean_len: 25.0, stddev_len: 5.0 });
+        profile.json_pattern_detected = true;
+        let rec = recommend_encoding(&profile, &meta);
+        assert_ne!(rec.rule_fired, RuleName::DeltaByteArray);
+    }
+
+    #[test]
+    fn test_rule6_confidence_boundary_downgrade() {
+        let (mut profile, mut meta) = make_profile("BYTE_ARRAY", None);
+        meta.physical_type = "BYTE_ARRAY".to_string();
+        profile.sample_fraction = 0.50;
+        profile.sample_rows = 500_000;
+        profile.cardinality_ratio = 0.30;
+        profile.string_monotonicity_score = Some(0.82);
+        profile.string_length_stats = Some(StringLengthStats { min_len: 5, max_len: 20, mean_len: 12.0, stddev_len: 3.0 });
+        let rec = recommend_encoding(&profile, &meta);
+        assert_eq!(rec.rule_fired, RuleName::DeltaByteArray);
+        assert_eq!(rec.confidence, ConfidenceTier::Medium);
+    }
+
+    #[test]
+    fn test_rule6_confidence_high() {
+        let (mut profile, mut meta) = make_profile("BYTE_ARRAY", None);
+        meta.physical_type = "BYTE_ARRAY".to_string();
+        profile.sample_fraction = 0.15;
+        profile.sample_rows = 200_000;
+        profile.cardinality_ratio = 0.30;
+        profile.string_monotonicity_score = Some(0.97);
+        profile.string_length_stats = Some(StringLengthStats { min_len: 5, max_len: 20, mean_len: 12.0, stddev_len: 3.0 });
+        let rec = recommend_encoding(&profile, &meta);
+        assert_eq!(rec.rule_fired, RuleName::DeltaByteArray);
+        assert_eq!(rec.confidence, ConfidenceTier::High);
+    }
+
+    #[test]
+    fn test_rule7_fires_basic() {
+        let (mut profile, mut meta) = make_profile("BYTE_ARRAY", None);
+        meta.physical_type = "BYTE_ARRAY".to_string();
+        profile.cardinality_ratio = 0.40;
+        profile.string_monotonicity_score = Some(0.50);
+        profile.string_length_stats = Some(StringLengthStats { min_len: 5, max_len: 25, mean_len: 15.0, stddev_len: 5.0 });
+        let rec = recommend_encoding(&profile, &meta);
+        assert_eq!(rec.rule_fired, RuleName::DeltaLengthByteArray);
+        assert_eq!(rec.encoding, "DELTA_LENGTH_BYTE_ARRAY");
+    }
+
+    #[test]
+    fn test_rule7_fires_null_monotonicity() {
+        let (mut profile, mut meta) = make_profile("BYTE_ARRAY", None);
+        meta.physical_type = "BYTE_ARRAY".to_string();
+        profile.cardinality_ratio = 0.30;
+        profile.string_monotonicity_score = None;
+        profile.string_length_stats = Some(StringLengthStats { min_len: 5, max_len: 20, mean_len: 12.0, stddev_len: 3.0 });
+        let rec = recommend_encoding(&profile, &meta);
+        assert_eq!(rec.rule_fired, RuleName::DeltaLengthByteArray);
+    }
+
+    #[test]
+    fn test_rule7_fires_at_cardinality_boundary() {
+        let (mut profile, mut meta) = make_profile("BYTE_ARRAY", None);
+        meta.physical_type = "BYTE_ARRAY".to_string();
+        profile.cardinality_ratio = 0.10;
+        profile.string_length_stats = Some(StringLengthStats { min_len: 5, max_len: 30, mean_len: 20.0, stddev_len: 5.0 });
+        let rec = recommend_encoding(&profile, &meta);
+        assert_eq!(rec.rule_fired, RuleName::DeltaLengthByteArray);
+    }
+
+    #[test]
+    fn test_rule7_no_fire_long_strings() {
+        let (mut profile, mut meta) = make_profile("BYTE_ARRAY", None);
+        meta.physical_type = "BYTE_ARRAY".to_string();
+        profile.cardinality_ratio = 0.40;
+        profile.string_length_stats = Some(StringLengthStats { min_len: 40, max_len: 80, mean_len: 51.0, stddev_len: 5.0 });
+        let rec = recommend_encoding(&profile, &meta);
+        assert_eq!(rec.rule_fired, RuleName::PlainDefault);
+    }
+
+    #[test]
+    fn test_rule7_no_fire_uuid() {
+        let (mut profile, mut meta) = make_profile("BYTE_ARRAY", None);
+        meta.physical_type = "BYTE_ARRAY".to_string();
+        profile.cardinality_ratio = 0.80;
+        profile.string_length_stats = Some(StringLengthStats { min_len: 36, max_len: 36, mean_len: 36.0, stddev_len: 0.0 });
+        profile.uuid_pattern_detected = true;
+        let rec = recommend_encoding(&profile, &meta);
+        assert_eq!(rec.rule_fired, RuleName::PlainUuid);
+    }
+
+    #[test]
+    fn test_rule7_no_fire_json() {
+        let (mut profile, mut meta) = make_profile("BYTE_ARRAY", None);
+        meta.physical_type = "BYTE_ARRAY".to_string();
+        profile.cardinality_ratio = 0.40;
+        profile.string_length_stats = Some(StringLengthStats { min_len: 10, max_len: 40, mean_len: 25.0, stddev_len: 5.0 });
+        profile.json_pattern_detected = true;
+        let rec = recommend_encoding(&profile, &meta);
+        assert_ne!(rec.rule_fired, RuleName::DeltaLengthByteArray);
+    }
+
+    #[test]
+    fn test_rule7_sorted_falls_to_rule6() {
+        let (mut profile, mut meta) = make_profile("BYTE_ARRAY", None);
+        meta.physical_type = "BYTE_ARRAY".to_string();
+        profile.cardinality_ratio = 0.30;
+        profile.string_monotonicity_score = Some(0.85);
+        profile.string_length_stats = Some(StringLengthStats { min_len: 5, max_len: 30, mean_len: 20.0, stddev_len: 5.0 });
+        let rec = recommend_encoding(&profile, &meta);
+        assert_eq!(rec.rule_fired, RuleName::DeltaByteArray);
+    }
+
+    #[test]
+    fn test_rule7_confidence_high() {
+        let (mut profile, mut meta) = make_profile("BYTE_ARRAY", None);
+        meta.physical_type = "BYTE_ARRAY".to_string();
+        profile.sample_fraction = 0.15;
+        profile.sample_rows = 200_000;
+        profile.cardinality_ratio = 0.30;
+        profile.string_monotonicity_score = Some(0.50);
+        profile.string_length_stats = Some(StringLengthStats { min_len: 5, max_len: 20, mean_len: 12.0, stddev_len: 3.0 });
+        let rec = recommend_encoding(&profile, &meta);
+        assert_eq!(rec.rule_fired, RuleName::DeltaLengthByteArray);
+        assert_eq!(rec.confidence, ConfidenceTier::High);
+    }
+
+    #[test]
+    fn test_rule7_confidence_low() {
+        let (mut profile, mut meta) = make_profile("BYTE_ARRAY", None);
+        meta.physical_type = "BYTE_ARRAY".to_string();
+        profile.sample_fraction = 0.005;
+        profile.sample_rows = 10_000;
+        profile.cardinality_ratio = 0.30;
+        profile.string_monotonicity_score = Some(0.50);
+        profile.string_length_stats = Some(StringLengthStats { min_len: 5, max_len: 20, mean_len: 12.0, stddev_len: 3.0 });
+        let rec = recommend_encoding(&profile, &meta);
+        assert_eq!(rec.rule_fired, RuleName::DeltaLengthByteArray);
+        assert_eq!(rec.confidence, ConfidenceTier::Low);
     }
 
     #[test]

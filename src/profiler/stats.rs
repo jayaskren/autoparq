@@ -26,6 +26,7 @@ pub struct ColumnProfile {
     pub cardinality_ratio: f64,
     pub cardinality_method: String,
     pub monotonicity_score: Option<f64>,
+    pub string_monotonicity_score: Option<f64>,
     pub run_length_score: f64,
     pub string_length_stats: Option<StringLengthStats>,
     pub uuid_pattern_detected: bool,
@@ -91,6 +92,43 @@ fn monotonicity_score(array: &ArrayRef) -> Option<f64> {
     }
     if total == 0 {
         Some(0.0)
+    } else {
+        Some(ascending as f64 / total as f64)
+    }
+}
+
+fn string_monotonicity_score(array: &ArrayRef) -> Option<f64> {
+    let values: Vec<Option<&str>> = match array.data_type() {
+        DataType::Utf8 => {
+            let arr = array.as_any().downcast_ref::<StringArray>()?;
+            (0..arr.len())
+                .map(|i| if arr.is_null(i) { None } else { Some(arr.value(i)) })
+                .collect()
+        }
+        DataType::LargeUtf8 => {
+            let arr = array.as_any().downcast_ref::<LargeStringArray>()?;
+            (0..arr.len())
+                .map(|i| if arr.is_null(i) { None } else { Some(arr.value(i)) })
+                .collect()
+        }
+        _ => return None,
+    };
+
+    let mut ascending = 0u64;
+    let mut total = 0u64;
+    let mut prev: Option<&str> = None;
+    for val in &values {
+        if let (Some(p), Some(v)) = (prev, *val) {
+            total += 1;
+            if v >= p {
+                ascending += 1;
+            }
+        }
+        prev = if val.is_some() { *val } else { None };
+    }
+
+    if total == 0 {
+        None
     } else {
         Some(ascending as f64 / total as f64)
     }
@@ -450,6 +488,7 @@ pub fn profile_column(sample: &crate::profiler::sampler::ColumnSample) -> Column
     };
 
     let monotonicity_score = monotonicity_score(array);
+    let string_monotonicity_score = string_monotonicity_score(array);
     let run_length_score = run_length_score(array);
 
     let string_length_stats = string_length_stats(array);
@@ -468,6 +507,7 @@ pub fn profile_column(sample: &crate::profiler::sampler::ColumnSample) -> Column
         cardinality_ratio,
         cardinality_method,
         monotonicity_score,
+        string_monotonicity_score,
         run_length_score,
         string_length_stats,
         uuid_pattern_detected,
@@ -496,6 +536,38 @@ mod tests {
             total_rows_in_file: 1000,
             sampled_rows: 0,
         }
+    }
+
+    #[test]
+    fn test_string_monotonicity_sorted() {
+        let arr: ArrayRef = Arc::new(StringArray::from(vec!["apple", "banana", "cherry", "date"]));
+        let sample = make_sample(arr, "BYTE_ARRAY");
+        let profile = profile_column(&sample);
+        assert!(profile.string_monotonicity_score.unwrap() > 0.99);
+    }
+
+    #[test]
+    fn test_string_monotonicity_reverse_sorted() {
+        let arr: ArrayRef = Arc::new(StringArray::from(vec!["z", "y", "x", "w"]));
+        let sample = make_sample(arr, "BYTE_ARRAY");
+        let profile = profile_column(&sample);
+        assert_eq!(profile.string_monotonicity_score.unwrap(), 0.0);
+    }
+
+    #[test]
+    fn test_string_monotonicity_none_for_int() {
+        let arr: ArrayRef = Arc::new(Int64Array::from(vec![1i64, 2, 3]));
+        let sample = make_sample(arr, "INT64");
+        let profile = profile_column(&sample);
+        assert!(profile.string_monotonicity_score.is_none());
+    }
+
+    #[test]
+    fn test_string_monotonicity_none_for_single_value() {
+        let arr: ArrayRef = Arc::new(StringArray::from(vec!["only_one"]));
+        let sample = make_sample(arr, "BYTE_ARRAY");
+        let profile = profile_column(&sample);
+        assert!(profile.string_monotonicity_score.is_none());
     }
 
     #[test]

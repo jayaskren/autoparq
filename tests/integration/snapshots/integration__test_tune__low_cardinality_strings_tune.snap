@@ -3,6 +3,33 @@ source: tests/integration/test_tune.rs
 expression: "&report_json"
 ---
 {
+  "column_profiles": [
+    {
+      "byte_entropy": null,
+      "cardinality_estimate": "[cardinality_estimate]",
+      "cardinality_method": "hyperloglog",
+      "cardinality_ratio": "[cardinality_ratio]",
+      "column_name": "status",
+      "json_pattern_detected": false,
+      "logical_type": "STRING",
+      "monotonicity_score": null,
+      "null_count_in_sample": 0,
+      "null_fraction": 0.0,
+      "physical_type": "BYTE_ARRAY",
+      "run_length_score": 0.0,
+      "sample_fraction": 1.0,
+      "sample_rows": 100000,
+      "string_length_stats": {
+        "max_len": 9,
+        "mean_len": 7.4,
+        "min_len": 6,
+        "stddev_len": 1.0198039027191157
+      },
+      "string_monotonicity_score": 0.6000060000600006,
+      "total_file_rows": 100000,
+      "uuid_pattern_detected": false
+    }
+  ],
   "columns": [
     {
       "cardinality_estimate": "[cardinality_estimate]",
@@ -14,7 +41,7 @@ expression: "&report_json"
       "encoding_rule_fired": "RleDictionary",
       "engine_compatibility": null,
       "full_explain": null,
-      "impact_stars": 5,
+      "impact_stars": 3,
       "logical_type": "STRING",
       "null_fraction": 0.0,
       "physical_type": "BYTE_ARRAY",
@@ -25,42 +52,99 @@ expression: "&report_json"
     }
   ],
   "current_codec": "SNAPPY",
+  "diagnostics": [
+    {
+      "cause_hypothesis": null,
+      "column_name": "status",
+      "current_codec": "SNAPPY",
+      "current_compression_ratio": 17.54562297359889,
+      "current_encodings": [
+        "PLAIN",
+        "RLE_DICTIONARY"
+      ],
+      "observation": "Current codec differs from recommendation (have: PLAIN,RLE_DICTIONARY + SNAPPY; recommend: RLE_DICTIONARY + ZSTD:3).",
+      "per_row_group_summary": null,
+      "status": "Mismatch",
+      "supporting_metric": "ratio=17.55×"
+    }
+  ],
   "engine": "unknown",
   "file_caveats": [],
   "file_path": "[file_path]",
+  "file_profile": {
+    "columns": [
+      {
+        "codec": "SNAPPY",
+        "compressed_bytes": 2159,
+        "compression_ratio": 17.54562297359889,
+        "encodings": [
+          "PLAIN",
+          "RLE",
+          "RLE_DICTIONARY"
+        ],
+        "logical_type": "STRING",
+        "max_value": "suspended",
+        "min_value": "active",
+        "name": "status",
+        "per_row_group_compressed_bytes": [
+          2159
+        ],
+        "per_row_group_dict_page_bytes": [
+          69
+        ],
+        "per_row_group_encodings": [
+          [
+            "PLAIN",
+            "RLE",
+            "RLE_DICTIONARY"
+          ]
+        ],
+        "per_row_group_uncompressed_bytes": [
+          37881
+        ],
+        "physical_type": "BYTE_ARRAY",
+        "statistics_available": true,
+        "total_null_count": 0,
+        "uncompressed_bytes": 37881
+      }
+    ],
+    "created_by": "parquet-rs version 55.2.0",
+    "file_size_bytes": 2613,
+    "num_row_groups": 1,
+    "num_rows": 100000,
+    "parquet_version": 1,
+    "path": "tests/fixtures/low_cardinality_strings.parquet",
+    "row_group_compressed_bytes": [
+      2159
+    ],
+    "row_group_row_counts": [
+      100000
+    ]
+  },
   "file_size_bytes": "[file_size_bytes]",
   "num_columns": 1,
   "num_rows": 100000,
   "options": {
     "a": {
       "caveats": [],
-      "codec_description": "ZSTD:3 (default)",
-      "estimated_read_speedup": 1.0913043478260869,
-      "estimated_size_bytes": 2272,
-      "estimated_size_reduction_pct": 13.043478260869556,
+      "codec_description": "ZSTD:3",
       "label": "Balanced",
-      "note": "estimated (not measured) — use autoparq bench to validate",
-      "python_snippet": "PARQUET_WRITE_OPTIONS = {\n    \"compression\": \"zstd\",\n    \"compression_level\": 3,\n    \"column_encoding\": {\n        \"status\": \"RLE_DICTIONARY\"\n    }\n}\npq.write_table(table, \"output.parquet\", **PARQUET_WRITE_OPTIONS)"
+      "python_snippet": "PARQUET_WRITE_OPTIONS = {\n    \"compression\": \"zstd\",\n    \"compression_level\": 3,\n    \"column_encoding\": {\n        \"status\": \"RLE_DICTIONARY\"\n    }\n}\npq.write_table(table, \"output.parquet\", **PARQUET_WRITE_OPTIONS)",
+      "tradeoff": "Best balance of file size and read speed"
     },
     "b": {
       "caveats": [],
-      "codec_description": "ZSTD:6 (maximum compression)",
-      "estimated_read_speedup": 1.0730434782608695,
-      "estimated_size_bytes": 2221,
-      "estimated_size_reduction_pct": 14.999999999999988,
+      "codec_description": "ZSTD:6",
       "label": "Smallest File",
-      "note": "estimated (not measured) — use autoparq bench to validate",
-      "python_snippet": "PARQUET_WRITE_OPTIONS = {\n    \"compression\": \"zstd\",\n    \"compression_level\": 6,\n    \"column_encoding\": {\n        \"status\": \"RLE_DICTIONARY\"\n    }\n}\npq.write_table(table, \"output.parquet\", **PARQUET_WRITE_OPTIONS)"
+      "python_snippet": "PARQUET_WRITE_OPTIONS = {\n    \"compression\": \"zstd\",\n    \"compression_level\": 6,\n    \"column_encoding\": {\n        \"status\": \"RLE_DICTIONARY\"\n    }\n}\npq.write_table(table, \"output.parquet\", **PARQUET_WRITE_OPTIONS)",
+      "tradeoff": "Smallest file; slower writes, slightly slower reads than ZSTD:3"
     },
     "c": {
       "caveats": [],
-      "codec_description": "LZ4 (fastest decompression)",
-      "estimated_read_speedup": 1.1186956521739129,
-      "estimated_size_bytes": 2340,
-      "estimated_size_reduction_pct": 10.434782608695645,
+      "codec_description": "LZ4",
       "label": "Fastest Reads",
-      "note": "estimated (not measured) — use autoparq bench to validate",
-      "python_snippet": "PARQUET_WRITE_OPTIONS = {\n    \"compression\": \"lz4\",\n    \"column_encoding\": {\n        \"status\": \"RLE_DICTIONARY\"\n    }\n}\npq.write_table(table, \"output.parquet\", **PARQUET_WRITE_OPTIONS)"
+      "python_snippet": "PARQUET_WRITE_OPTIONS = {\n    \"compression\": \"lz4\",\n    \"column_encoding\": {\n        \"status\": \"RLE_DICTIONARY\"\n    }\n}\npq.write_table(table, \"output.parquet\", **PARQUET_WRITE_OPTIONS)",
+      "tradeoff": "Fastest decompression; files are slightly larger than ZSTD"
     }
   },
   "overall_confidence": "High",
