@@ -1,6 +1,7 @@
 use arrow::array::{
-    Array, ArrayRef, BinaryArray, BooleanArray, FixedSizeBinaryArray, Float32Array, Float64Array,
-    Int32Array, Int64Array, LargeBinaryArray, LargeStringArray, StringArray,
+    Array, ArrayRef, BinaryArray, BooleanArray, Date32Array, Date64Array, FixedSizeBinaryArray,
+    Float32Array, Float64Array, Int32Array, Int64Array, LargeBinaryArray, LargeStringArray,
+    StringArray,
 };
 use arrow::compute::cast;
 use arrow::datatypes::DataType;
@@ -59,16 +60,22 @@ fn monotonicity_score(array: &ArrayRef) -> Option<f64> {
                 .map(|i| if arr.is_null(i) { None } else { Some(arr.value(i)) })
                 .collect()
         }
-        DataType::Int32 | DataType::Date32 => {
+        DataType::Int32 => {
             let arr = array.as_any().downcast_ref::<Int32Array>()?;
             (0..arr.len())
-                .map(|i| {
-                    if arr.is_null(i) {
-                        None
-                    } else {
-                        Some(arr.value(i) as i64)
-                    }
-                })
+                .map(|i| if arr.is_null(i) { None } else { Some(arr.value(i) as i64) })
+                .collect()
+        }
+        DataType::Date32 => {
+            let arr = array.as_any().downcast_ref::<Date32Array>()?;
+            (0..arr.len())
+                .map(|i| if arr.is_null(i) { None } else { Some(arr.value(i) as i64) })
+                .collect()
+        }
+        DataType::Date64 => {
+            let arr = array.as_any().downcast_ref::<Date64Array>()?;
+            (0..arr.len())
+                .map(|i| if arr.is_null(i) { None } else { Some(arr.value(i)) })
                 .collect()
         }
         _ => return None,
@@ -177,13 +184,29 @@ fn get_value_bytes(array: &ArrayRef, i: usize) -> Vec<u8> {
                 .expect("downcast guaranteed by DataType match arm");
             if arr.value(i) { vec![1u8] } else { vec![0u8] }
         }
-        DataType::Int32 | DataType::Date32 => {
-            let arr = array.as_any().downcast_ref::<Int32Array>()
+        DataType::Int32 => {
+            let arr = array
+                .as_any()
+                .downcast_ref::<Int32Array>()
+                .expect("downcast guaranteed by DataType match arm");
+            arr.value(i).to_le_bytes().to_vec()
+        }
+        DataType::Date32 => {
+            let arr = array
+                .as_any()
+                .downcast_ref::<Date32Array>()
                 .expect("downcast guaranteed by DataType match arm");
             arr.value(i).to_le_bytes().to_vec()
         }
         DataType::Int64 => {
             let arr = array.as_any().downcast_ref::<Int64Array>()
+                .expect("downcast guaranteed by DataType match arm");
+            arr.value(i).to_le_bytes().to_vec()
+        }
+        DataType::Date64 => {
+            let arr = array
+                .as_any()
+                .downcast_ref::<Date64Array>()
                 .expect("downcast guaranteed by DataType match arm");
             arr.value(i).to_le_bytes().to_vec()
         }

@@ -14,4 +14,11 @@ export default defineConfig({
   resolve: {
     alias: { '@wasm': fileURLToPath(new URL('./pkg', import.meta.url)) },
   },
+  server: {
+    watch: {
+      // Use polling to avoid hitting the inotify instance limit when VSCode is running.
+      usePolling: true,
+      interval: 500,
+    },
+  },
 });
